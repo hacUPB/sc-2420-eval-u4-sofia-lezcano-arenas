@@ -4,6 +4,8 @@
 #include "constants.h"
 #include <SDL_audio.h>
 
+SDL_sem* semaforo;
+
 typedef struct {
     Uint8* audioData; // Pointer to audio data    
     Uint32 audioLength; // Length of audio data in bytes    
@@ -39,10 +41,10 @@ void play_audio(void) {
 
     if (isaudioDeviceInit == 0) {
         
-              audioSpec.freq = 44100;
+              /*audioSpec.freq = 44100;
               audioSpec.format = AUDIO_S16SYS;
               audioSpec.channels = 1;
-              audioSpec.samples = 2048;        
+              audioSpec.samples = 2048;*/        
 
         audioSpec.callback = AudioCallback;
         audioSpec.userdata = &audioContext;
@@ -50,7 +52,7 @@ void play_audio(void) {
         audioDevice = SDL_OpenAudioDevice(NULL, 0, &audioSpec, NULL, 0);
         if (audioDevice == 0) {
             printf("Unable to open audio device: %s\n", SDL_GetError());
-            //quité el return 1;
+            return 1;
         }
         isaudioDeviceInit = 1;
     }
@@ -58,18 +60,20 @@ void play_audio(void) {
     audioContext.audioPosition = 0;
     audioContext.audioFinished = SDL_FALSE;
     if (SDL_LoadWAV("tap.wav", &audioSpec, &audioContext.audioData, &audioContext.audioLength) != NULL) {
-        SDL_PauseAudioDevice(audioDevice, 0); // Start audio playback    
+        SDL_PauseAudioDevice(audioDevice, 0); // Start audio playback
+        SDL_SemWait(semaforo);
     }
     else {
         printf("Unable to load WAV file: %s\n", SDL_GetError());
     }
     while (audioContext.audioFinished != SDL_TRUE) {
         SDL_Delay(100);
+        SDL_SemPost(semaforo);
     }
 
     printf("Audio finished\n");
-    SDL_CloseAudioDevice(audioDevice); // cambié la función
-    SDL_FreeWAV(audioContext.audioData); // Free the loaded WAV data
+    //SDL_CloseAudioDevice(audioDevice); // cambié la función
+    //SDL_FreeWAV(audioContext.audioData); // Free the loaded WAV data
 }
 
 
@@ -133,7 +137,8 @@ void process_input(void) {
         if (event.key.keysym.sym == SDLK_RIGHT)
             paddle.vel_x = 0;
         if (event.key.keysym.sym == SDLK_p) {
-            play_audio();
+            SDL_Thread* thread = SDL_CreateThread(play_audio, "HiloAudio", NULL);
+            
         }
 
         break;
@@ -239,6 +244,8 @@ int main(int argc, char* args[]) {
     game_is_running = initialize_window();
     setup();
 
+    semaforo = SDL_CreateSemaphore(1);
+
     while (game_is_running) {
         process_input();
         update();
@@ -246,6 +253,7 @@ int main(int argc, char* args[]) {
     }
 
     destroy_window();
+    SDL_DestroySemaphore(semaforo);
 
     return 0;
 }

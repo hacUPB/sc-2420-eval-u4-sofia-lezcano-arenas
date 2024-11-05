@@ -615,91 +615,89 @@ int main(int argc, char* args[]) {
 ```
 
 #### Versión funcional
+Al ver que no estaba utilizando correctamente la lógica del semáforo, pues se seguían superponiendo los sonidos, consulté con ChatGPT. Las sugerencias fueron las siguientes:
+- Crear un semáforo con un valor inicial de 1, es decir, desbloqueado -> `SDL_CreateSemaphore(1)`
+- Intentar bloquear el semáforo antes de iniciar la reproducción del audio. Si el semáforo está disponible o desbloqueado (valor > 0), se reproduce el audio y se bloquea el semáforo (valor en 0) para evitar que se intente empezar una nueva reproducción del audioa antes de que termine la que estaba en curso.
+- En AudioCallback, cuando el audio termina de reproducirse, liberar el semáforo para que otro audio pueda reproducirse.
+
+**Resultado:**
+
 ```C
 #include <stdio.h>
 #include <stdbool.h>
 #include <SDL.h>
 #include "constants.h"
 #include <SDL_audio.h>
+#include <SDL_thread.h>
 
-SDL_sem* semaforo;
+// Declaración del semáforo
+SDL_sem* audioSemaphore;
 
 typedef struct {
-    Uint8* audioData; // Pointer to audio data    
-    Uint32 audioLength; // Length of audio data in bytes    
-    Uint32 audioPosition; // Current position in audio data    
-    SDL_bool audioFinished; //flag set to True whether audio playback has finished
+    Uint8* audioData;          // Puntero a los datos de audio
+    Uint32 audioLength;        // Longitud de los datos de audio en bytes
+    Uint32 audioPosition;      // Posición actual en los datos de audio
 } AudioContext;
 
 void AudioCallback(void* userdata, Uint8* stream, int len) {
     AudioContext* audioContext = (AudioContext*)userdata;
 
     if (audioContext->audioPosition >= audioContext->audioLength) {
-        audioContext->audioFinished = SDL_TRUE;
+        // Libera el semáforo cuando el audio termina
+        SDL_SemPost(audioSemaphore);
         return;
     }
 
-    // Calculate the amount of data to copy to the stream    
     int remainingBytes = audioContext->audioLength - audioContext->audioPosition;
     int bytesToCopy = (len < remainingBytes) ? len : remainingBytes;
 
-    // Copy audio data to the stream    
+    // Copia los datos de audio al stream de salida
     SDL_memcpy(stream, audioContext->audioData + audioContext->audioPosition, bytesToCopy);
-
-    // Update the audio position    
     audioContext->audioPosition += bytesToCopy;
 }
 
-
-void play_audio(void) {
+int play_audio(void* arg) {
     static uint8_t isaudioDeviceInit = 0;
     static SDL_AudioSpec audioSpec;
     static SDL_AudioDeviceID audioDevice = 0;
     static AudioContext audioContext;
 
-    if (isaudioDeviceInit == 0) {
-        
-              /*audioSpec.freq = 44100;
-              audioSpec.format = AUDIO_S16SYS;
-              audioSpec.channels = 1;
-              audioSpec.samples = 2048;*/        
-
+    if (!isaudioDeviceInit) {
         audioSpec.callback = AudioCallback;
         audioSpec.userdata = &audioContext;
 
+        // Inicializa el dispositivo de audio
         audioDevice = SDL_OpenAudioDevice(NULL, 0, &audioSpec, NULL, 0);
         if (audioDevice == 0) {
-            printf("Unable to open audio device: %s\n", SDL_GetError());
+            printf("No se pudo abrir el dispositivo de audio: %s\n", SDL_GetError());
             return 1;
         }
         isaudioDeviceInit = 1;
     }
 
-    audioContext.audioPosition = 0;
-    audioContext.audioFinished = SDL_FALSE;
     if (SDL_LoadWAV("tap.wav", &audioSpec, &audioContext.audioData, &audioContext.audioLength) != NULL) {
-        SDL_PauseAudioDevice(audioDevice, 0); // Start audio playback
-        SDL_SemWait(semaforo);
+        audioContext.audioPosition = 0;
+        SDL_PauseAudioDevice(audioDevice, 0); // Inicia la reproducción de audio
+
+        // Espera a que el audio termine antes de salir de la función
+        SDL_SemWait(audioSemaphore);
+
+        // Libera el archivo de audio una vez que termina
+        SDL_FreeWAV(audioContext.audioData);
     }
     else {
-        printf("Unable to load WAV file: %s\n", SDL_GetError());
-    }
-    while (audioContext.audioFinished != SDL_TRUE) {
-        SDL_Delay(100);
-        SDL_SemPost(semaforo);
+        printf("No se pudo cargar el archivo WAV: %s\n", SDL_GetError());
     }
 
-    printf("Audio finished\n");
-    //SDL_CloseAudioDevice(audioDevice); // cambié la función
-    //SDL_FreeWAV(audioContext.audioData); // Free the loaded WAV data
+    return 0;
 }
-
 
 int game_is_running = false;
 SDL_Window* window = NULL;
 SDL_Renderer* renderer = NULL;
 int last_frame_time = 0;
 
+// Objetos del juego: bola y plataforma
 struct game_object {
     float x;
     float y;
@@ -711,7 +709,7 @@ struct game_object {
 
 int initialize_window(void) {
     if (SDL_Init(SDL_INIT_EVERYTHING) != 0) {
-        fprintf(stderr, "Error initializing SDL.\n");
+        fprintf(stderr, "Error al inicializar SDL.\n");
         return false;
     }
     window = SDL_CreateWindow(
@@ -723,14 +721,18 @@ int initialize_window(void) {
         SDL_WINDOW_BORDERLESS
     );
     if (!window) {
-        fprintf(stderr, "Error creating SDL Window.\n");
+        fprintf(stderr, "Error al crear la ventana SDL.\n");
         return false;
     }
     renderer = SDL_CreateRenderer(window, -1, 0);
     if (!renderer) {
-        fprintf(stderr, "Error creating SDL Renderer.\n");
+        fprintf(stderr, "Error al crear el renderizador SDL.\n");
         return false;
     }
+
+    // Inicializa el semáforo con un valor inicial de 1
+    audioSemaphore = SDL_CreateSemaphore(1);
+
     return true;
 }
 
@@ -747,24 +749,23 @@ void process_input(void) {
         if (event.key.keysym.sym == SDLK_LEFT)
             paddle.vel_x = -400;
         if (event.key.keysym.sym == SDLK_RIGHT)
-            paddle.vel_x = +400;
+            paddle.vel_x = 400;
         break;
     case SDL_KEYUP:
-        if (event.key.keysym.sym == SDLK_LEFT)
-            paddle.vel_x = 0;
-        if (event.key.keysym.sym == SDLK_RIGHT)
+        if (event.key.keysym.sym == SDLK_LEFT || event.key.keysym.sym == SDLK_RIGHT)
             paddle.vel_x = 0;
         if (event.key.keysym.sym == SDLK_p) {
-            SDL_Thread* thread = SDL_CreateThread(play_audio, "HiloAudio", NULL);
-            
+            // Intenta bloquear el semáforo antes de reproducir el audio
+            if (SDL_SemTryWait(audioSemaphore) == 0) {
+                SDL_Thread* thread = SDL_CreateThread(play_audio, "HiloAudio", NULL);
+                SDL_DetachThread(thread);
+            }
         }
-
         break;
     }
 }
 
 void setup(void) {
-    // Initialize values for the the ball object    
     ball.width = 15;
     ball.height = 15;
     ball.x = 20;
@@ -772,7 +773,6 @@ void setup(void) {
     ball.vel_x = 300;
     ball.vel_y = 300;
 
-    // Initialize the values for the paddle object    
     paddle.width = 100;
     paddle.height = 20;
     paddle.x = (WINDOW_WIDTH / 2) - (paddle.width / 2);
@@ -782,42 +782,29 @@ void setup(void) {
 }
 
 void update(void) {
-    // Calculate how much we have to wait until we reach the target frame time    
     int time_to_wait = FRAME_TARGET_TIME - (SDL_GetTicks() - last_frame_time);
-
-    // Only delay if we are too fast too update this frame    
     if (time_to_wait > 0 && time_to_wait <= FRAME_TARGET_TIME)
         SDL_Delay(time_to_wait);
 
-    // Get a delta time factor converted to seconds to be used to update my objects    
     float delta_time = (SDL_GetTicks() - last_frame_time) / 1000.0;
-
-    // Store the milliseconds of the current frame    
     last_frame_time = SDL_GetTicks();
 
-    // update ball and paddle position    
     ball.x += ball.vel_x * delta_time;
     ball.y += ball.vel_y * delta_time;
     paddle.x += paddle.vel_x * delta_time;
     paddle.y += paddle.vel_y * delta_time;
 
-    // Check for ball collision with the walls    
     if (ball.x <= 0 || ball.x + ball.width >= WINDOW_WIDTH)
         ball.vel_x = -ball.vel_x;
     if (ball.y < 0)
         ball.vel_y = -ball.vel_y;
 
-    // Check for ball collision with the paddle    
     if (ball.y + ball.height >= paddle.y && ball.x + ball.width >= paddle.x && ball.x <= paddle.x + paddle.width)
         ball.vel_y = -ball.vel_y;
 
-    // Prevent paddle from moving outside the boundaries of the window    
-    if (paddle.x <= 0)
-        paddle.x = 0;
-    if (paddle.x >= WINDOW_WIDTH - paddle.width)
-        paddle.x = WINDOW_WIDTH - paddle.width;
+    if (paddle.x <= 0) paddle.x = 0;
+    if (paddle.x >= WINDOW_WIDTH - paddle.width) paddle.x = WINDOW_WIDTH - paddle.width;
 
-    // Check for game over    
     if (ball.y + ball.height > WINDOW_HEIGHT) {
         ball.x = WINDOW_WIDTH / 2;
         ball.y = 0;
@@ -828,23 +815,11 @@ void render(void) {
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
 
-    // Draw a rectangle for the ball object    
-    SDL_Rect ball_rect = {
-    (int)ball.x,
-    (int)ball.y,
-    (int)ball.width,
-    (int)ball.height
-    };
+    SDL_Rect ball_rect = { (int)ball.x, (int)ball.y, (int)ball.width, (int)ball.height };
     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
     SDL_RenderFillRect(renderer, &ball_rect);
 
-    // Draw a rectangle for the paddle object    
-    SDL_Rect paddle_rect = {
-    (int)paddle.x,
-    (int)paddle.y,
-    (int)paddle.width,
-    (int)paddle.height
-    };
+    SDL_Rect paddle_rect = { (int)paddle.x, (int)paddle.y, (int)paddle.width, (int)paddle.height };
     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
     SDL_RenderFillRect(renderer, &paddle_rect);
 
@@ -854,15 +829,13 @@ void render(void) {
 void destroy_window(void) {
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    SDL_DestroySemaphore(audioSemaphore); // Destruye el semáforo
     SDL_Quit();
 }
 
 int main(int argc, char* args[]) {
-
     game_is_running = initialize_window();
     setup();
-
-    semaforo = SDL_CreateSemaphore(1);
 
     while (game_is_running) {
         process_input();
@@ -871,8 +844,174 @@ int main(int argc, char* args[]) {
     }
 
     destroy_window();
-    SDL_DestroySemaphore(semaforo);
-
     return 0;
 }
 ```
+
+#### ¿Qué es lo que se necesita sincronizar?
+Se necesita reproducir un sonido a la vez, para evitar la superposición de los mismos. Así que se debería esperar hasta que uno termine de reproducirse antes de empezar una nueva reproducción. Todo esto, también evitando que se bloquee el hilo principal.
+
+#### ¿Cómo ayuda el semáforo a lograr la sincronización?
+Antes de empezar a reproducir el sonido, con el semáforo se verifica si el audio ya está reproduciéndose (si está reproduciéndose, el semáforo está ocupado). Si está ocupado, el semáforo no deja que otro sonido empiece. Después de que el sonido termina, se libera el semáforo, permitiendo que otro sonido pueda ser reproducido.
+
+## Ejercicio 9
+Para verificar que entendí, comentaré un poco el código.
+```C
+/*Shared resources in a process*/
+#include <stdio.h>
+#include <pthread.h>
+#include <time.h>
+/*Declare a global variable as shared resource*/
+int shared = 0;
+/*Routine that the thread executes*/
+void *function(void *args)
+{
+shared++; // esta función incrementa en una unidad la variable shared
+return NULL;
+}
+
+int main(int argc, char const *argv[])
+{
+pthread_t thr1, thr2; // se crean dos variables, una para cada hilo
+if(pthread_create(&thr1,NULL,&function,NULL) != 0)
+{
+return 1; // si al crear el primer hilo ocurre algún error, se devuelve 1
+}
+if(pthread_create(&thr2,NULL,&function,NULL) != 0)
+{
+return 2; // si al crear el segundo hilo ocurre algún error, se devuelve 2
+}
+if(pthread_join(thr1,NULL) != 0)
+{
+return 3; // si al esperar el primer hilo hay un error, se devuelve 3
+}
+if(pthread_join(thr2,NULL) != 0)
+{
+return 4; // si al esperar el segundo hilo hay un error, se devuelve 4
+}
+printf("Shared variable value: %d\n",shared); // imprime el valor de shared
+return 0; // se devuelve cero
+}
+```
+
+Me di cuenta que los valores de retorno no se están utilizando para nada, pero podrían ser útiles si ocurre algo inesperado durante la ejecución, para poder realizar un diagnóstico más preciso.
+
+**Resultado de la ejecución del programa:**
+![alt text](image-7.png)
+Efectivamente, en este caso los hilos no interfieren entre sí.
+
+## Ejercicio 10: observando una condición de carrera
+En este código, cada hilo debía aumentar 100 unidades la variable shared y es lo que se observa.
+
+**Resultado de la ejecución del programa:**
+![alt text](image-8.png)
+
+**¿Qué sucede si se aumentan el número de iteraciones? ¿Cuál es el número de iteraciones que causan un comportamiento indeseado?**
+
+Aumentando a 3000, el resultado siguió siendo correcto.
+
+Aumentando a 1000000 (un millón) la situación se descontroló:
+![alt text](image-9.png)
+
+Desde 100000 se puede observar algo similar:
+![alt text](image-10.png)
+
+Colocando 80000 iteraciones se observa que en ocasiones falla y en ocasiones acierta, es bastante aleatorio al parecer:
+![alt text](image-11.png)
+
+## Ejercicio 11: mutual exclusion
+Una exclusión mutua es una técnica que se usa para evitar que ocurra una condición de carrera.
+
+Algunos pedazos que no me quedaban del todo claros, le pedí a ChatGPT que me los explicara. Colocaré la descripción con comentarios.
+``` C
+/*Shared resources in a process*/
+#include <stdio.h>
+#include <pthread.h>
+#include <time.h>
+#define NUMITERATIONS 100
+/*Declare a global variable as shared resource*/
+int shared = 0;
+/*Mutual exclusion*/
+pthread_mutex_t mxShared; // Se declara un mutex 'mxShared' para proteger el acceso a la variable 'shared'
+void *function(void *args)
+{
+	for (size_t i = 0; i < NUMITERATIONS; i++) //por el número de iteraciones...
+	{
+		pthread_mutex_lock(&mxShared); // Bloquea el mutex para proteger el acceso a 'shared'
+		shared++;
+		pthread_mutex_unlock(&mxShared); // Desbloquea el mutex para permitir que otros hilos accedan a 'shared'
+	}
+	return NULL;
+}
+int main(int argc, char const *argv[])
+{
+	pthread_t thr1, thr2;
+	pthread_mutex_init(&mxShared,NULL);
+	if(pthread_create(&thr1,NULL,&function,NULL) != 0)
+	{
+		return 1;
+	}
+	if(pthread_create(&thr2,NULL,&function,NULL) != 0)
+	{
+		return 2;
+	}
+	if(pthread_join(thr1,NULL) != 0)
+	{
+		return 3;
+	}
+	if(pthread_join(thr2,NULL) != 0)
+	{
+		return 4;
+	}
+	pthread_mutex_destroy(&mxShared); // Destruye el mutex 'mxShared' después de que los hilos han terminado
+	printf("Shared variable value: %d\n",shared);
+	return 0;
+}
+```
+
+**Resultado de la ejecución del programa:**
+![alt text](image-12.png)
+
+## Ejercicio 12: uso de semáforos
+Además del uso adecuado de los semáforos, me pareció importante revisar más sobre el mutex y en qué situaciones podría ser más útil usar uno u otro.
+### Semáforos
+#### ¿Qué son?
+Son contadores que se utiliza para controlar el acceso a uno o más recursos. Los semáforos pueden ser de dos tipos:
+- *Semáforo binario:* Similar a un mutex, solo tiene dos estados (bloqueado o desbloqueado).
+- *Semáforo contador:* Permite que varios hilos accedan al recurso al mismo tiempo, hasta un límite definido.
+#### Uso adecuado
+- Cuando necesitas permitir el acceso simultáneo de varios hilos a un recurso hasta un número máximo.
+- Para sincronizar eventos o permitir que un conjunto de hilos espere hasta que un recurso esté disponible.
+#### Ejemplos:
+- Controlar el acceso a una piscina de conexiones donde solo un número limitado de hilos puede usar las conexiones al mismo tiempo.
+- Implementar un mecanismo en el que varios hilos deben esperar a que ocurra un evento, como en un productor-consumidor.
+
+#### Cuándo usar un semáforo:
+Cuando necesitas controlar el acceso a un recurso que puede ser compartido por múltiples hilos, pero hasta un límite (por ejemplo, permitir que hasta 5 hilos accedan a un recurso simultáneamente).
+Cuando debes sincronizar la ejecución de los hilos, por ejemplo, haciendo que un hilo espere hasta que otro hilo realice una acción.
+
+### Mutex (Exclusión mutua)
+#### ¿Qué es?
+Un mutex es un mecanismo de sincronización que permite el acceso exclusivo a un recurso compartido por un solo hilo a la vez.
+#### Uso adecuado
+- Cuando solo un hilo debe acceder a un recurso compartido en un momento dado.
+- Cuando se quiere proteger una sección crítica que involucra la lectura o modificación de un recurso compartido, como una variable o una estructura de datos.
+#### Ejemplo
+Proteger una variable global que se modifica en un entorno multihilo para evitar condiciones de carrera.
+#### Características:
+- Un hilo que bloquea un mutex debe ser el mismo que lo desbloquea.
+- Se usa principalmente para bloqueo simple, asegurando que una sección crítica sea ejecutada por un solo hilo a la vez.
+#### Cuándo usar un mutex:
+Cuando necesitas que un recurso solo sea usado por un hilo a la vez.
+Cuando el bloqueo y desbloqueo del recurso es estrictamente necesario para proteger la integridad de un recurso compartido.
+
+### ¿Cómo decidir cuál usar?
+Usar un mutex si:
+- Solo un hilo debe acceder a un recurso a la vez.
+- Necesitas un mecanismo simple para proteger una sección crítica.
+- No se requiere la sincronización de eventos o la espera de un número específico de recursos.
+
+Usar un semáforo si:
+- Necesitas permitir que varios hilos accedan a un recurso hasta un límite.
+- Estás trabajando con problemas de sincronización más complejos, como el patrón productor-consumidor.
+- Debes sincronizar múltiples hilos basados en la disponibilidad de un recurso o la ocurrencia de un evento.

@@ -1,5 +1,5 @@
 # Ejercicios preparatorios
-Dados algunos problemas tratando de realizar los ejercicios en Visual Studio, continuaré utilizando Codespaces.
+Dados algunos problemas tratando de realizar los ejercicios en Visual Studio, continuaré utilizando Codespaces para los ejercicios que así lo requieran.
 
 ## Ejercicio 6: esperar un hilo
 En el ejercicio 5 el programa terminaba independientemente de si los hilos habían terminado sus tareas o no. Para solucionarlo, hay que esperar a que terminen los procesos que se les han encargado antes de acabar el programa.

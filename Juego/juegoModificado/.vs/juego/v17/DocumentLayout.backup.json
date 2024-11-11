@@ -1,9 +1,9 @@
 {
   "Version": 1,
-  "WorkspaceRootPath": "C:\\Users\\sofia\\Documents\\juegoModificado\\",
+  "WorkspaceRootPath": "C:\\Users\\sofia\\Documents\\Repositorios\\sc-2420-eval-u4-sofia-lezcano-arenas\\Juego\\juegoModificado\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{65C07B85-D4C9-4065-9191-5C9D421FC4F8}|juego.vcxproj|C:\\Users\\sofia\\Documents\\juegoModificado\\main.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "AbsoluteMoniker": "D:0:0:{65C07B85-D4C9-4065-9191-5C9D421FC4F8}|juego.vcxproj|C:\\Users\\sofia\\Documents\\Repositorios\\sc-2420-eval-u4-sofia-lezcano-arenas\\Juego\\juegoModificado\\main.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{65C07B85-D4C9-4065-9191-5C9D421FC4F8}|juego.vcxproj|solutionrelative:main.c||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
@@ -20,13 +20,13 @@
               "$type": "Document",
               "DocumentIndex": 0,
               "Title": "main.c",
-              "DocumentMoniker": "C:\\Users\\sofia\\Documents\\juegoModificado\\main.c",
+              "DocumentMoniker": "C:\\Users\\sofia\\Documents\\Repositorios\\sc-2420-eval-u4-sofia-lezcano-arenas\\Juego\\juegoModificado\\main.c",
               "RelativeDocumentMoniker": "main.c",
-              "ToolTip": "C:\\Users\\sofia\\Documents\\juegoModificado\\main.c*",
+              "ToolTip": "C:\\Users\\sofia\\Documents\\Repositorios\\sc-2420-eval-u4-sofia-lezcano-arenas\\Juego\\juegoModificado\\main.c*",
               "RelativeToolTip": "main.c*",
-              "ViewState": "AgIAAK0AAAAAAAAAAAAAAL8AAAAmAAAAAAAAAA==",
+              "ViewState": "AgIAADoAAAAAAAAAAAAAAEoAAAAJAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000423|",
-              "WhenOpened": "2024-09-08T14:14:57.233Z",
+              "WhenOpened": "2024-11-10T17:11:57.797Z",
               "EditorCaption": ""
             }
           ]

@@ -2,11 +2,22 @@
 #include <stdbool.h>
 #include <SDL.h>
 #include <math.h>
+#include <SDL_audio.h>
+#include <SDL_thread.h>
 
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 600
 #define FPS 30
 #define FRAME_TIME (1000/FPS)
+
+typedef struct {
+    Uint8* audioData;          // Puntero a los datos de audio
+    Uint32 audioLength;        // Longitud de los datos de audio en bytes
+    Uint32 audioPosition;      // Posicion actual en los datos de audio
+} AudioContext;
+
+//semaforo
+SDL_sem* audioSemaphore;
 
 //punteros
 SDL_Window* window = NULL; //se crea una ventana
@@ -17,6 +28,11 @@ int game_is_running = false;
 int last_frame_time = 0;
 int empezar = 0;
 int teclaEspacio = 0;
+
+int estadoChoco1, estadoChoco2, estadoChoco3, estadoChoco4; //si está en 0, no han colisionado con él, si está en 1 ya colisionaron con él y debe dejar de dibujarse
+int puntajeChoco1, puntajeChoco2, puntajeChoco3, puntajeChoco4; //si está en 0, no han colisionado con él, si está en 1 ya colisionaron con él y debe dejar de dibujarse
+int puntaje = 0;
+int indicadorPuntaje1, indicadorPuntaje2, indicadorPuntaje3, indicadorPuntaje4; // si está en cero, no se ha sumado su puntaje, si está en 1, ya se sumó
 
 int rectX, rectY, rectW, rectH, rectV;
 
@@ -29,10 +45,67 @@ struct linea {
     int height;
 } lh1, lh2, lh3, lh4, lh5, lh6, lh7, lh8, lv1, lv2, lv3, lv4, lv5, lv6, lv7, lv8, meta;
 
-int estadoChoco1, estadoChoco2, estadoChoco3, estadoChoco4; //si está en 0, no han colisionado con él, si está en 1 ya colisionaron con él y debe dejar de dibujarse
-int puntajeChoco1, puntajeChoco2, puntajeChoco3, puntajeChoco4; //si está en 0, no han colisionado con él, si está en 1 ya colisionaron con él y debe dejar de dibujarse
-int puntaje = 0;
-int indicadorPuntaje1, indicadorPuntaje2, indicadorPuntaje3, indicadorPuntaje4; // si está en cero, no se ha sumado su puntaje, si está en 1, ya se sumó
+void AudioCallback(void* userdata, Uint8* stream, int len) {
+    AudioContext* audioContext = (AudioContext*)userdata;
+
+    if (audioContext->audioPosition >= audioContext->audioLength) {
+        // Libera el semaforo cuando el audio termina
+        SDL_SemPost(audioSemaphore);
+        return;
+    }
+
+    int remainingBytes = audioContext->audioLength - audioContext->audioPosition;
+    int bytesToCopy = (len < remainingBytes) ? len : remainingBytes;
+
+    // Copia los datos de audio al stream de salida
+    SDL_memcpy(stream, audioContext->audioData + audioContext->audioPosition, bytesToCopy);
+    audioContext->audioPosition += bytesToCopy;
+}
+
+int play_audio(void* arg) {
+    static uint8_t isaudioDeviceInit = 0;
+    static SDL_AudioSpec audioSpec;
+    static SDL_AudioDeviceID audioDevice = 0;
+    static AudioContext audioContext;
+
+    if (!isaudioDeviceInit) {
+        if (SDL_Init(SDL_INIT_AUDIO) < 0) {
+            printf("Error inicializando SDL: %s\n", SDL_GetError());
+            return 1;
+        }
+        audioSpec.freq = 44100;
+        audioSpec.format = AUDIO_S16LSB;
+        audioSpec.channels = 2;
+        audioSpec.samples = 4096;
+        audioSpec.callback = AudioCallback;
+        audioSpec.userdata = &audioContext;
+
+        // Inicializa el dispositivo de audio
+        audioDevice = SDL_OpenAudioDevice(NULL, 0, &audioSpec, NULL, 0);
+        if (audioDevice == 0) {
+            printf("No se pudo abrir el dispositivo de audio: %s\n", SDL_GetError());
+            return 1;
+        }
+        isaudioDeviceInit = 1;
+    }
+
+    if (SDL_LoadWAV("reinicio.wav", &audioSpec, &audioContext.audioData, &audioContext.audioLength) != NULL) {
+        audioContext.audioPosition = 0;
+        SDL_PauseAudioDevice(audioDevice, 0); // Inicia la reproducción de audio
+
+        // Espera a que el audio termine antes de salir de la función
+        SDL_SemWait(audioSemaphore);
+
+        // Libera el archivo de audio una vez que termina
+        SDL_FreeWAV(audioContext.audioData);
+    }
+    else {
+        printf("No se pudo cargar el archivo WAV: %s\n", SDL_GetError());
+    }
+
+    return 0;
+}
+
 
 int initialize_window(void) {
     if (SDL_Init(SDL_INIT_EVERYTHING) != 0) {
@@ -170,6 +243,10 @@ void update(void)
             }
             if (event.key.keysym.sym == SDLK_r) //si se presiona Escape
             {
+                if (SDL_SemTryWait(audioSemaphore) == 0) {
+                    SDL_Thread* thread = SDL_CreateThread(play_audio, "HiloAudio", NULL);
+                    SDL_DetachThread(thread);
+                }
                 teclaEspacio = 0;
                 empezar = 0;
                 //reestablecer posición inicial cuadrado
@@ -502,6 +579,7 @@ void render(void)
 void destroy_window(void) {
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    SDL_DestroySemaphore(audioSemaphore); // Destruye el semaforo
     SDL_Quit();
 }
 
